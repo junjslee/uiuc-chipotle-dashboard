@@ -1,0 +1,83 @@
+- generic [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - heading "🌯 Green St. Chipotle" [level=1] [ref=e6]
+          - paragraph [ref=e7]: Crowdsourced · Live
+        - generic [ref=e8]: LIVE
+      - generic [ref=e9]:
+        - generic [ref=e11]: LONG
+        - paragraph [ref=e12]: 20+ min wait
+        - generic [ref=e13]:
+          - img [ref=e14]
+          - generic [ref=e17]: "Last Updated: Just now"
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - img [ref=e20]
+          - heading "What do you see right now?" [level=2] [ref=e25]
+        - generic [ref=e26]:
+          - button "🚶 Walk-In 0–5 min" [ref=e27] [cursor=pointer]:
+            - generic [ref=e28]: 🚶
+            - generic [ref=e29]: Walk-In
+            - generic [ref=e30]: 0–5 min
+          - button "⏳ Medium 10–15 min" [ref=e31] [cursor=pointer]:
+            - generic [ref=e32]: ⏳
+            - generic [ref=e33]: Medium
+            - generic [ref=e34]: 10–15 min
+          - button "😬 Long 20+ min" [active] [ref=e35] [cursor=pointer]:
+            - generic [ref=e36]: 😬
+            - generic [ref=e37]: Long
+            - generic [ref=e38]: 20+ min
+          - button "🚨 Out the Door Past entrance" [ref=e39] [cursor=pointer]:
+            - generic [ref=e40]: 🚨
+            - generic [ref=e41]: Out the Door
+            - generic [ref=e42]: Past entrance
+      - generic [ref=e43]:
+        - generic [ref=e45]: INSIGHT
+        - generic [ref=e46]:
+          - img [ref=e47]
+          - heading "In-Person = More Food" [level=3] [ref=e51]
+        - paragraph [ref=e52]: Research shows in-person orders at this location are approximately 20% larger by weight than mobile app orders.
+        - list [ref=e53]:
+          - listitem [ref=e54]:
+            - generic [ref=e55]: •
+            - text: Students who order in-person receive measurably more food for the same price.
+        - paragraph [ref=e56]: Worth the wait? Check the line status above.
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - img [ref=e59]
+          - heading "Typical Busy Times" [level=2] [ref=e62]
+        - paragraph [ref=e63]: Based on historical data — not live
+        - generic [ref=e64]:
+          - button "Mon" [ref=e65] [cursor=pointer]
+          - button "Tue" [ref=e66] [cursor=pointer]
+          - button "Wed" [ref=e67] [cursor=pointer]
+          - button "Thu" [ref=e68] [cursor=pointer]
+          - button "Fri" [ref=e69] [cursor=pointer]
+          - button "Sat" [ref=e70] [cursor=pointer]
+          - button "Sun" [ref=e71] [cursor=pointer]
+        - generic [ref=e73]:
+          - generic [ref=e74]: 10am
+          - generic [ref=e75]: 11am
+          - generic [ref=e76]: 12pm
+          - generic [ref=e77]: 1pm
+          - generic [ref=e78]: 2pm
+          - generic [ref=e79]: 3pm
+          - generic [ref=e80]: 4pm
+          - generic [ref=e81]: 5pm
+          - generic [ref=e82]: 6pm
+          - generic [ref=e83]: 7pm
+          - generic [ref=e84]: 8pm
+          - generic [ref=e85]: 9pm
+        - generic [ref=e86]:
+          - generic [ref=e89]: Quiet
+          - generic [ref=e92]: Moderate
+          - generic [ref=e95]: Busy
+          - generic [ref=e98]: Packed
+      - generic [ref=e99]:
+        - paragraph [ref=e100]: Data is crowdsourced by UIUC students. Not affiliated with Chipotle Mexican Grill.
+        - paragraph [ref=e101]: UIUC Business Project · 2026
+  - button "Open Next.js Dev Tools" [ref=e108] [cursor=pointer]:
+    - img [ref=e109]
+  - alert [ref=e112]

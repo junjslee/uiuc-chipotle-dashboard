@@ -1,0 +1,12 @@
+{
+  "name": "Green St. Chipotle Tracker",
+  "short_name": "Chipotle Tracker",
+  "description": "Live line status for Green St. Chipotle",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#A81612",
+  "icons": [
+    { "src": "/icon", "sizes": "any", "type": "image/png" }
+  ]
+}
