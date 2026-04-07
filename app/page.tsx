@@ -1,13 +1,22 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Clock, Users, Scale, TrendingUp, CheckCircle } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Clock, Users, Scale, TrendingUp, CheckCircle, MapPin } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import type { Report } from '@/lib/supabase'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type CrowdStatus = 'walkin' | 'medium' | 'long' | 'outthedoor' | 'unknown'
+
+// ─── Constants ──────────────────────────────────────────────────────────────────
+
+const CHIPOTLE_LAT = 40.10968
+const CHIPOTLE_LNG = -88.22714
+const PROXIMITY_METERS = 300
+const STATUS_WINDOW_MS = 30 * 60 * 1000   // 30-min window for majority vote
+const COOLDOWN_MS = 10 * 60 * 1000        // 10 min between reports per device
+const COOLDOWN_KEY = 'chipotle_last_report'
 
 // ─── Status Config ──────────────────────────────────────────────────────────────
 
@@ -144,7 +153,7 @@ const REPORT_BUTTONS: ReportButton[] = [
   },
 ]
 
-// ─── Bar color helper ───────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────────
 
 function barColor(pct: number): string {
   if (pct >= 75) return '#ef4444'
@@ -153,77 +162,163 @@ function barColor(pct: number): string {
   return '#22c55e'
 }
 
+/** Haversine distance in meters */
+function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000
+  const φ1 = (lat1 * Math.PI) / 180
+  const φ2 = (lat2 * Math.PI) / 180
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180
+  const a =
+    Math.sin(Δφ / 2) ** 2 +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+/** Majority vote over reports within the time window */
+function majorityStatus(reports: Report[]): {
+  status: CrowdStatus
+  count: number
+  newestAt: Date | null
+} {
+  const now = Date.now()
+  const recent = reports.filter(
+    (r) => now - new Date(r.created_at).getTime() < STATUS_WINDOW_MS
+  )
+  if (recent.length === 0) return { status: 'unknown', count: 0, newestAt: null }
+
+  const tally: Partial<Record<string, number>> = {}
+  for (const r of recent) tally[r.status] = (tally[r.status] ?? 0) + 1
+  const winner = Object.entries(tally).sort((a, b) => b[1] - a[1])[0][0]
+
+  const newestAt = new Date(
+    Math.max(...recent.map((r) => new Date(r.created_at).getTime()))
+  )
+  return { status: winner as CrowdStatus, count: recent.length, newestAt }
+}
+
+/** Remaining cooldown in seconds, 0 if ready */
+function cooldownSecondsRemaining(): number {
+  if (typeof window === 'undefined') return 0
+  const raw = localStorage.getItem(COOLDOWN_KEY)
+  if (!raw) return 0
+  const elapsed = Date.now() - Number(raw)
+  return elapsed >= COOLDOWN_MS ? 0 : Math.ceil((COOLDOWN_MS - elapsed) / 1000)
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────────
 
 export default function Home() {
   const [status, setStatus] = useState<CrowdStatus>('unknown')
+  const [reportCount, setReportCount] = useState(0)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [selectedDay, setSelectedDay] = useState<string>('')
   const [justReported, setJustReported] = useState<CrowdStatus | null>(null)
   const [, setTick] = useState(0)
+  const [isNearChipotle, setIsNearChipotle] = useState(false)
+  const [proximityDismissed, setProximityDismissed] = useState(false)
+  const [cooldownSecs, setCooldownSecs] = useState(0)
 
-  // Apply a report row — shared by initial fetch and realtime updates
-  function applyReport(report: Report) {
-    const reportedAt = new Date(report.created_at)
-    const elapsed = (Date.now() - reportedAt.getTime()) / 60000
-    if (elapsed < 30) {
-      setStatus(report.status as CrowdStatus)
-      setLastUpdated(reportedAt)
-    }
-  }
+  const reportsRef = useRef<Report[]>([])
 
-  // Init: fetch latest report + subscribe to realtime inserts
+  const recompute = useCallback(() => {
+    const { status: s, count, newestAt } = majorityStatus(reportsRef.current)
+    // Prune stale entries
+    const now = Date.now()
+    reportsRef.current = reportsRef.current.filter(
+      (r) => now - new Date(r.created_at).getTime() < STATUS_WINDOW_MS
+    )
+    setStatus(s)
+    setReportCount(count)
+    setLastUpdated(newestAt)
+  }, [])
+
+  // Init: fetch all reports in the last 30 min + realtime subscription
   useEffect(() => {
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     setSelectedDay(dayNames[new Date().getDay()])
 
-    // Initial fetch
     supabase
       .from('reports')
       .select('id, status, created_at')
-      .order('created_at', { ascending: false })
-      .limit(1)
+      .gte('created_at', new Date(Date.now() - STATUS_WINDOW_MS).toISOString())
+      .order('created_at', { ascending: true })
       .then(({ data }) => {
-        if (data && data.length > 0) applyReport(data[0] as Report)
+        if (data) {
+          reportsRef.current = data as Report[]
+          recompute()
+        }
       })
 
-    // Realtime subscription
     const channel = supabase
       .channel('reports-live')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'reports' },
-        (payload) => applyReport(payload.new as Report)
+        (payload) => {
+          reportsRef.current = [...reportsRef.current, payload.new as Report]
+          recompute()
+        }
       )
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [recompute])
 
-  // Every 30s: re-render "X minutes ago" text; expire stale status after 30 min
+  // Tick every 30s: prune expired reports and recompute
   useEffect(() => {
     const interval = setInterval(() => {
       setTick((t) => t + 1)
-      if (lastUpdated) {
-        const elapsed = (Date.now() - lastUpdated.getTime()) / 60000
-        if (elapsed >= 30) {
-          setStatus('unknown')
-          setLastUpdated(null)
-        }
-      }
+      recompute()
     }, 30000)
     return () => clearInterval(interval)
-  }, [lastUpdated])
+  }, [recompute])
+
+  // Geolocation: one-time proximity check on mount
+  useEffect(() => {
+    if (!navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const dist = haversineMeters(
+          pos.coords.latitude,
+          pos.coords.longitude,
+          CHIPOTLE_LAT,
+          CHIPOTLE_LNG
+        )
+        if (dist <= PROXIMITY_METERS) setIsNearChipotle(true)
+      },
+      () => { /* permission denied — silent */ }
+    )
+  }, [])
+
+  // Cooldown: tick every second while active
+  useEffect(() => {
+    setCooldownSecs(cooldownSecondsRemaining())
+    const interval = setInterval(() => {
+      setCooldownSecs(cooldownSecondsRemaining())
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   async function handleReport(newStatus: Exclude<CrowdStatus, 'unknown'>) {
-    // Optimistic update — UI responds instantly
-    setStatus(newStatus)
-    setLastUpdated(new Date())
+    if (cooldownSecs > 0) return
+
+    // Optimistic update
+    const optimistic: Report = {
+      id: 'optimistic',
+      status: newStatus,
+      created_at: new Date().toISOString(),
+    }
+    reportsRef.current = [...reportsRef.current, optimistic]
+    recompute()
     setJustReported(newStatus)
     setTimeout(() => setJustReported(null), 2000)
 
-    // Persist to DB — Realtime will propagate to all other open sessions
+    // Set cooldown
+    localStorage.setItem(COOLDOWN_KEY, String(Date.now()))
+    setCooldownSecs(COOLDOWN_MS / 1000)
+
     await supabase.from('reports').insert({ status: newStatus })
   }
 
@@ -235,8 +330,15 @@ export default function Home() {
     return `${minutes} minutes ago`
   }
 
+  function formatCooldown(secs: number): string {
+    const m = Math.floor(secs / 60)
+    const s = secs % 60
+    return m > 0 ? `${m}m ${s}s` : `${s}s`
+  }
+
   const cfg = STATUS_CONFIG[status]
   const heatValues = HEAT_DATA[selectedDay] ?? HEAT_DATA['Mon']
+  const showProximityBanner = isNearChipotle && !proximityDismissed && justReported === null
 
   return (
     <main
@@ -245,7 +347,35 @@ export default function Home() {
     >
       <div className="max-w-md mx-auto flex flex-col gap-5">
 
-        {/* ── Section 1: Header ─────────────────────────────────────────────── */}
+        {/* ── Proximity Banner ──────────────────────────────────────────────── */}
+        {showProximityBanner && (
+          <div
+            className="rounded-2xl p-4 flex items-start gap-3 border"
+            style={{
+              backgroundColor: 'rgba(255,95,5,0.08)',
+              borderColor: 'rgba(255,95,5,0.35)',
+            }}
+          >
+            <MapPin size={18} className="shrink-0 mt-0.5" style={{ color: '#FF5F05' }} />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-white leading-tight">
+                You&apos;re near Chipotle!
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: '#d1d5db' }}>
+                Help other students — how&apos;s the line right now?
+              </p>
+            </div>
+            <button
+              onClick={() => setProximityDismissed(true)}
+              className="shrink-0 text-lg leading-none cursor-pointer"
+              style={{ color: '#6b7280' }}
+            >
+              ×
+            </button>
+          </div>
+        )}
+
+        {/* ── Header ───────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-white">
@@ -263,7 +393,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* ── Section 2: Live Status Card ───────────────────────────────────── */}
+        {/* ── Live Status Card ──────────────────────────────────────────────── */}
         <div
           className="rounded-2xl p-5 border-2"
           style={{
@@ -271,7 +401,6 @@ export default function Home() {
             borderColor: cfg.borderColor,
           }}
         >
-          {/* Pulse dot + label row */}
           <div className="flex items-center gap-3 mb-2">
             {status !== 'unknown' && (
               <span
@@ -287,7 +416,6 @@ export default function Home() {
             </span>
           </div>
 
-          {/* Wait description */}
           <p
             className="text-base font-semibold mb-4"
             style={{ color: status === 'unknown' ? '#6b7280' : '#e5e7eb' }}
@@ -297,46 +425,69 @@ export default function Home() {
               : cfg.wait}
           </p>
 
-          {/* Last updated */}
-          {lastUpdated ? (
-            <div
-              className="flex items-center gap-1.5 text-xs"
-              style={{ color: '#9ca3af' }}
-            >
-              <Clock size={12} />
-              <span>Last Updated: {getLastUpdatedText()}</span>
-            </div>
-          ) : (
-            <div
-              className="flex items-center gap-1.5 text-xs"
-              style={{ color: '#6b7280' }}
-            >
-              <Clock size={12} />
-              <span>No reports yet today</span>
-            </div>
-          )}
+          <div className="flex items-center justify-between">
+            {lastUpdated ? (
+              <div
+                className="flex items-center gap-1.5 text-xs"
+                style={{ color: '#9ca3af' }}
+              >
+                <Clock size={12} />
+                <span>Updated {getLastUpdatedText()}</span>
+              </div>
+            ) : (
+              <div
+                className="flex items-center gap-1.5 text-xs"
+                style={{ color: '#6b7280' }}
+              >
+                <Clock size={12} />
+                <span>No reports yet</span>
+              </div>
+            )}
+
+            {reportCount > 0 && (
+              <div
+                className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
+                style={{
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  color: '#9ca3af',
+                }}
+              >
+                <Users size={10} />
+                <span>{reportCount} {reportCount === 1 ? 'report' : 'reports'}</span>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* ── Section 3: Report Live ────────────────────────────────────────── */}
+        {/* ── Report Live ───────────────────────────────────────────────────── */}
         <div
           className="rounded-2xl p-4"
           style={{ backgroundColor: '#111111' }}
         >
-          <div className="flex items-center gap-2 mb-4">
-            <Users size={16} style={{ color: '#FF5F05' }} />
-            <h2 className="text-sm font-bold text-white">
-              What do you see right now?
-            </h2>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Users size={16} style={{ color: '#FF5F05' }} />
+              <h2 className="text-sm font-bold text-white">
+                What do you see right now?
+              </h2>
+            </div>
+            {cooldownSecs > 0 && (
+              <span className="text-xs" style={{ color: '#6b7280' }}>
+                Next in {formatCooldown(cooldownSecs)}
+              </span>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             {REPORT_BUTTONS.map((btn) => {
               const isJustReported = justReported === btn.status
+              const disabled = cooldownSecs > 0
               return (
                 <button
                   key={btn.status}
                   onClick={() => handleReport(btn.status as Exclude<CrowdStatus, 'unknown'>)}
-                  className="relative rounded-xl p-3 flex flex-col items-center justify-center gap-1 min-h-[80px] border-2 transition-all active:scale-95 select-none cursor-pointer"
+                  disabled={disabled}
+                  className="relative rounded-xl p-3 flex flex-col items-center justify-center gap-1 min-h-[80px] border-2 transition-all active:scale-95 select-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100"
                   style={{
                     backgroundColor: isJustReported
                       ? btn.bgHover
@@ -367,7 +518,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* ── Section 4: Quantity Audit Insight ────────────────────────────── */}
+        {/* ── Quantity Audit Insight ────────────────────────────────────────── */}
         <div
           className="rounded-2xl p-4 border-l-4"
           style={{
@@ -375,7 +526,6 @@ export default function Home() {
             borderLeftColor: '#FF5F05',
           }}
         >
-          {/* INSIGHT badge */}
           <div className="flex items-center gap-2 mb-3">
             <span
               className="text-xs font-bold px-2 py-0.5 rounded-full"
@@ -417,7 +567,7 @@ export default function Home() {
           </p>
         </div>
 
-        {/* ── Section 5: Heat Map ───────────────────────────────────────────── */}
+        {/* ── Heat Map ──────────────────────────────────────────────────────── */}
         <div
           className="rounded-2xl p-4"
           style={{ backgroundColor: '#111111' }}
@@ -430,7 +580,6 @@ export default function Home() {
             Based on historical data — not live
           </p>
 
-          {/* Day selector */}
           <div className="flex gap-1 mb-5 overflow-x-auto pb-1">
             {DAYS.map((day) => (
               <button
@@ -448,13 +597,9 @@ export default function Home() {
             ))}
           </div>
 
-          {/* Bar chart */}
           <div className="flex gap-1 h-24">
             {heatValues.map((pct, i) => (
-              <div
-                key={i}
-                className="flex-1 flex flex-col justify-end"
-              >
+              <div key={i} className="flex-1 flex flex-col justify-end">
                 <div
                   className="w-full rounded-t-sm transition-all duration-300"
                   style={{
@@ -467,7 +612,6 @@ export default function Home() {
             ))}
           </div>
 
-          {/* X-axis hour labels */}
           <div className="flex gap-1 mt-1">
             {HOURS.map((hr, i) => (
               <div
@@ -480,7 +624,6 @@ export default function Home() {
             ))}
           </div>
 
-          {/* Legend */}
           <div className="flex items-center gap-3 mt-3 flex-wrap">
             {[
               { color: '#22c55e', label: 'Quiet' },
@@ -501,7 +644,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* ── Section 6: Footer ─────────────────────────────────────────────── */}
+        {/* ── Footer ────────────────────────────────────────────────────────── */}
         <div className="text-center pb-4 space-y-1">
           <p className="text-xs" style={{ color: '#4b5563' }}>
             Data is crowdsourced by UIUC students. Not affiliated with Chipotle
