@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Clock, Users, Scale, TrendingUp, CheckCircle, MapPin } from 'lucide-react'
+import { Clock, Users, Scale, TrendingUp, CheckCircle, MapPin, Share2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import type { Report } from '@/lib/supabase'
 
@@ -218,6 +218,7 @@ export default function Home() {
   const [isNearChipotle, setIsNearChipotle] = useState(false)
   const [proximityDismissed, setProximityDismissed] = useState(false)
   const [cooldownSecs, setCooldownSecs] = useState(0)
+  const [copied, setCopied] = useState(false)
 
   const reportsRef = useRef<Report[]>([])
 
@@ -326,6 +327,17 @@ export default function Home() {
     return `${minutes} minutes ago`
   }
 
+  async function handleShare() {
+    const url = window.location.href
+    if (navigator.share) {
+      await navigator.share({ title: 'Green St. Chipotle — Live Line Tracker', url })
+    } else {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
   function formatCooldown(secs: number): string {
     const m = Math.floor(secs / 60)
     const s = secs % 60
@@ -381,11 +393,24 @@ export default function Home() {
               Crowdsourced · Live
             </p>
           </div>
-          <div
-            className="px-3 py-1 rounded-full text-xs font-semibold"
-            style={{ backgroundColor: 'rgba(168,22,18,0.2)', color: '#f87171' }}
-          >
-            LIVE
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleShare}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors"
+              style={{
+                backgroundColor: copied ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.06)',
+                color: copied ? '#4ade80' : '#9ca3af',
+              }}
+            >
+              <Share2 size={11} />
+              {copied ? 'Copied!' : 'Share'}
+            </button>
+            <div
+              className="px-3 py-1 rounded-full text-xs font-semibold"
+              style={{ backgroundColor: 'rgba(168,22,18,0.2)', color: '#f87171' }}
+            >
+              LIVE
+            </div>
           </div>
         </div>
 
