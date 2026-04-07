@@ -263,7 +263,6 @@ export default function Home() {
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recompute])
 
   // Tick every 30s: prune expired reports and recompute
@@ -304,14 +303,11 @@ export default function Home() {
   async function handleReport(newStatus: Exclude<CrowdStatus, 'unknown'>) {
     if (cooldownSecs > 0) return
 
-    // Optimistic update
-    const optimistic: Report = {
-      id: 'optimistic',
-      status: newStatus,
-      created_at: new Date().toISOString(),
-    }
-    reportsRef.current = [...reportsRef.current, optimistic]
-    recompute()
+    // Optimistic UI — update state directly so the card responds instantly.
+    // We do NOT touch reportsRef here; the realtime INSERT event will add the
+    // real row and recompute the majority vote, avoiding a duplicate count.
+    setStatus(newStatus)
+    setLastUpdated(new Date())
     setJustReported(newStatus)
     setTimeout(() => setJustReported(null), 2000)
 
