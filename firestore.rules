@@ -1,0 +1,22 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /reports/{reportId} {
+      // Anyone can read the live status feed (no login by design).
+      allow read: if true;
+
+      // Anyone can submit a report, but only with a valid status
+      // and a server-stamped timestamp. Prevents spoofed timestamps
+      // and garbage status values.
+      allow create: if
+        request.resource.data.keys().hasOnly(['status', 'createdAt']) &&
+        request.resource.data.status in ['walkin', 'medium', 'long', 'outthedoor'] &&
+        request.resource.data.createdAt == request.time;
+
+      // Reports are immutable once written.
+      allow update, delete: if false;
+    }
+  }
+}

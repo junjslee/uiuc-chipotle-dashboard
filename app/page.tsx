@@ -2,8 +2,17 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Clock, Users, Scale, TrendingUp, CheckCircle, MapPin, Share2 } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
-import type { Report } from '@/lib/supabase'
+import { getDb, type Report } from '@/lib/firebase'
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  serverTimestamp,
+  Timestamp,
+} from 'firebase/firestore'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -234,36 +243,36 @@ export default function Home() {
     setLastUpdated(newestAt)
   }, [])
 
-  // Init: fetch all reports in the last 30 min + realtime subscription
+  // Init: live subscription to reports in the last 30 min
   useEffect(() => {
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     setSelectedDay(dayNames[new Date().getDay()])
 
-    supabase
-      .from('reports')
-      .select('id, status, created_at')
-      .gte('created_at', new Date(Date.now() - STATUS_WINDOW_MS).toISOString())
-      .order('created_at', { ascending: true })
-      .then(({ data }) => {
-        if (data) {
-          reportsRef.current = data as Report[]
-          recompute()
-        }
-      })
+    const cutoff = Timestamp.fromMillis(Date.now() - STATUS_WINDOW_MS)
+    const q = query(
+      collection(getDb(), 'reports'),
+      where('createdAt', '>=', cutoff),
+      orderBy('createdAt', 'asc'),
+    )
 
-    const channel = supabase
-      .channel('reports-live')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'reports' },
-        (payload) => {
-          reportsRef.current = [...reportsRef.current, payload.new as Report]
-          recompute()
-        }
-      )
-      .subscribe()
+    const unsubscribe = onSnapshot(q, (snap) => {
+      reportsRef.current = snap.docs
+        .map((doc) => {
+          const data = doc.data()
+          const ts = data.createdAt as Timestamp | null
+          // Skip optimistic local writes that haven't received the server timestamp yet
+          if (!ts) return null
+          return {
+            id: doc.id,
+            status: data.status as string,
+            created_at: ts.toDate().toISOString(),
+          }
+        })
+        .filter((r): r is Report => r !== null)
+      recompute()
+    })
 
-    return () => { supabase.removeChannel(channel) }
+    return () => unsubscribe()
   }, [recompute])
 
   // Tick every 30s: prune expired reports and recompute
@@ -316,7 +325,10 @@ export default function Home() {
     localStorage.setItem(COOLDOWN_KEY, String(Date.now()))
     setCooldownSecs(COOLDOWN_MS / 1000)
 
-    await supabase.from('reports').insert({ status: newStatus })
+    await addDoc(collection(getDb(), 'reports'), {
+      status: newStatus,
+      createdAt: serverTimestamp(),
+    })
   }
 
   function getLastUpdatedText(): string {
